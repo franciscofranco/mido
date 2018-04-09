@@ -699,17 +699,6 @@ static inline struct usb_gadget *dev_to_usb_gadget(struct device *dev)
 #define gadget_for_each_ep(tmp, gadget) \
 	list_for_each_entry(tmp, &(gadget)->ep_list, ep_list)
 
-/**
- * usb_ep_align - returns @len aligned to ep's maxpacketsize.
- * @ep: the endpoint whose maxpacketsize is used to align @len
- * @len: buffer size's length to align to @ep's maxpacketsize
- *
- * This helper is used to align buffer's size to an ep's maxpacketsize.
- */
-static inline size_t usb_ep_align(struct usb_ep *ep, size_t len)
-{
-	return round_up(len, (size_t)le16_to_cpu(ep->desc->wMaxPacketSize));
-}
 
 /**
  * usb_ep_align - returns @len aligned to ep's maxpacketsize.
