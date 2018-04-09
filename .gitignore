@@ -96,3 +96,8 @@ x509.genkey
 
 # Kconfig presets
 all.config
+build.sh
+out/
+upload.sh
+upload_custom.sh
+version
