@@ -843,7 +843,8 @@ WLANTL_Start
   vos_atomic_set_U8( &pTLCb->ucTxSuspended, 0);
   pTLCb->uResCount = uResCount;
 
-  vos_timer_start(&pTLCb->tx_frames_timer, WLANTL_SAMPLE_INTERVAL);
+  if (IS_FEATURE_SUPPORTED_BY_FW(SAP_BUFF_ALLOC))
+    vos_timer_start(&pTLCb->tx_frames_timer, WLANTL_SAMPLE_INTERVAL);
 
   return VOS_STATUS_SUCCESS;
 }/* WLANTL_Start */
@@ -7822,7 +7823,7 @@ WLANTL_FatalErrorHandler
     * Issue SSR. vos_wlanRestart has tight checks to make sure that
     * we do not send an FIQ if previous FIQ is not processed
     */
-   vos_wlanRestart();
+   vos_wlanRestart(VOS_REASON_UNSPECIFIED);
 }
 
 /*==========================================================================
@@ -14483,8 +14484,8 @@ void WLANTL_RegisterFwdEapol(v_PVOID_t pvosGCtx,
    WLANTL_CbType* pTLCb = NULL;
    pTLCb = VOS_GET_TL_CB(pvosGCtx);
 
-   pTLCb->pfnEapolFwd = pfnFwdEapol;
-
+   if (pTLCb)
+      pTLCb->pfnEapolFwd = pfnFwdEapol;
 }
 
  /**

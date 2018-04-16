@@ -74,6 +74,10 @@
 /*--------------------------------------------------------------------------- 
   Preprocessor definitions and constants
   -------------------------------------------------------------------------*/
+
+/* SAP channel change wait time in ms */
+#define HDD_SAP_CHAN_CNG_WAIT_TIME 1500
+
 /** Number of attempts to detect/remove card */
 #define LIBRA_CARD_INSERT_DETECT_MAX_COUNT      5
 #define LIBRA_CARD_REMOVE_DETECT_MAX_COUNT      5
@@ -828,6 +832,8 @@ struct hdd_station_ctx
    /**Connection information*/
    connection_info_t conn_info;
 
+   connection_info_t cache_conn_info;
+
    roaming_info_t roam_info;
 
 #if  defined (WLAN_FEATURE_VOWIFI_11R) || defined (FEATURE_WLAN_ESE) || defined(FEATURE_WLAN_LFR)
@@ -1556,6 +1562,17 @@ struct hdd_offloaded_packets_ctx
 
 /** Adapter stucture definition */
 
+struct hdd_cache_channel_info {
+	int channel_num;
+	int reg_status;
+	int wiphy_status;
+};
+
+struct hdd_cache_channels {
+	int num_channels;
+	struct hdd_cache_channel_info *channel_info;
+};
+
 struct hdd_context_s
 {
    /** Global VOS context  */
@@ -1842,6 +1859,9 @@ struct hdd_context_s
     v_BOOL_t roaming_ini_original;
 
     uint32_t track_arp_ip;
+
+    struct hdd_cache_channels *orginal_channels;
+    struct mutex cache_channel_lock;
 };
 
 typedef enum  {
@@ -2302,6 +2322,14 @@ void hdd_restore_roaming(hdd_context_t *hdd_ctx);
 int wlan_hdd_check_and_stop_mon(hdd_adapter_t *sta_adapter, bool wait);
 
 /**
+ * hdd_wait_for_ecsa_complete() - wait if ecsa is in progress
+ * @hdd_ctx: hdd context
+ *
+ * Return: int.
+ */
+int hdd_wait_for_ecsa_complete(hdd_context_t *hdd_ctx);
+
+/**
  * hdd_is_sta_sap_scc_allowed_on_dfs_chan() - check if sta+sap scc allowed on
  * dfs chan
  * @hdd_ctx: pointer to hdd context
@@ -2325,5 +2353,26 @@ hdd_wlan_nla_put_u64(struct sk_buff *skb, int attrtype, u64 value)
 	return nla_put_u64_64bit(skb, attrtype, value, NL80211_ATTR_PAD);
 }
 #endif
+
+/*
+ * hdd_parse_disable_chn_cmd() - Parse the channel list received
+ * in command.
+ * @adapter: pointer to hdd adapter
+ *
+ * @return: 0 on success, Error code on failure
+ */
+int hdd_parse_disable_chan_cmd(hdd_adapter_t *adapter, tANI_U8 *ptr);
+
+/*
+ * hdd_parse_disable_chn_cmd() - get disable channel list
+ * in command.
+ * @hdd_ctx: hdd context
+ * @buf: buffer to hold disable channel list
+ * @buf_len: buffer length
+ *
+ * @return: length of data copied to buf
+ */
+int hdd_get_disable_ch_list(hdd_context_t *hdd_ctx, tANI_U8 *buf,
+                            tANI_U8 buf_len);
 
 #endif    // end #if !defined( WLAN_HDD_MAIN_H )
