@@ -101,3 +101,4 @@ out/
 upload.sh
 upload_custom.sh
 version
+build_mido.sh
