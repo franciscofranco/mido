@@ -24,8 +24,12 @@ ifeq ($(TARGET_SUPPORTS_WEARABLES),true)
 ifneq ($(findstring device,$(LOCAL_PATH)),)
     WLAN_DLKM := 1
 else
+ifneq ($(findstring vendor,$(LOCAL_PATH)),)
+    WLAN_DLKM := 1
+else
     WLAN_DLKM := 0
 endif # findstring device
+endif
 else
 ifneq ($(findstring vendor,$(LOCAL_PATH)),)
     WLAN_DLKM := 1
@@ -54,7 +58,11 @@ else
     WLAN_BLD_DIR := vendor/qcom/opensource/wlan
 endif
 else
+ifneq ($(ANDROID_BUILD_TOP),)
+    WLAN_BLD_DIR := $(ANDROID_BUILD_TOP)/device/qcom/msm8909w/opensource/wlan
+else
     WLAN_BLD_DIR := device/qcom/msm8909w/opensource/wlan
+endif
 endif
 endif
 
@@ -120,10 +128,8 @@ endif
 
 # This is set once per LOCAL_PATH, not per (kernel) module
 
-ifneq ($(TARGET_SUPPORTS_WEARABLES),true)
 ifneq ($(ANDROID_BUILD_TOP),)
 KBUILD_OPTIONS := WLAN_ROOT=$(WLAN_BLD_DIR)/prima
-endif
 endif
 
 ifeq ($(KBUILD_OPTIONS),)
