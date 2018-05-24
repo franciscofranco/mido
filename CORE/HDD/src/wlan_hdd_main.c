@@ -151,7 +151,6 @@ static struct kparam_string fwpath = {
 static char *country_code;
 static int   enable_11d = -1;
 static int   enable_dfs_chan_scan = -1;
-static int   gbcnMissRate = -1;
 
 #ifndef MODULE
 static int wlan_hdd_inited;
@@ -2707,18 +2706,38 @@ hdd_parse_reassoc(hdd_adapter_t *pAdapter, const char *command, int total_len)
 }
 #endif  /* WLAN_FEATURE_VOWIFI_11R || FEATURE_WLAN_ESE FEATURE_WLAN_LFR */
 
-static void get_bcn_miss_rate_cb(VOS_STATUS status, int bcnMissRate, void *data)
+struct bcn_miss_rate_priv {
+	int bcn_miss_rate;
+};
+
+/**
+ * get_bcn_miss_rate_cb() callback invoked on receiving beacon miss
+ * rate from firmware
+ * @status: Status of get beacon miss rate operation
+ * @bcnMissRate: Beacon miss rate
+ * @context: Context passed while registering callback
+ *
+ * This function is invoked by WDA layer on receiving
+ * WDI_GET_BCN_MISS_RATE_RSP
+ *
+ * Return: None
+ */
+static void get_bcn_miss_rate_cb(VOS_STATUS status, int bcnMissRate,
+				 void *context)
 {
 	struct hdd_request *request;
+	struct bcn_miss_rate_priv *priv;
 
-	request = hdd_request_get(data);
+	request = hdd_request_get(context);
 	if (!request) {
 		hddLog(VOS_TRACE_LEVEL_ERROR, FL("Obsolete request"));
 		return;
-        }
+	}
+
+	priv = hdd_request_priv(request);
 
 	if (VOS_STATUS_SUCCESS == status)
-		gbcnMissRate = bcnMissRate;
+		priv->bcn_miss_rate = bcnMissRate;
 	else
 		hddLog(VOS_TRACE_LEVEL_ERROR, FL("failed to get bcnMissRate"));
 
@@ -2732,7 +2751,19 @@ struct fw_stats_priv {
 	tSirFwStatsResult *fw_stats;
 };
 
-void hdd_fw_statis_cb(VOS_STATUS status,
+/**
+ * hdd_fw_stats_cb() callback invoked on receiving firmware stats
+ * from firmware
+ * @status: Status of get firmware stats operation
+ * @fwStatsResult: firmware stats
+ * @context: Context passed while registering callback
+ *
+ * This function is invoked by WDA layer on receiving
+ * WDI_GET_FW_STATS_RSP
+ *
+ * Return: None
+ */
+static void hdd_fw_stats_cb(VOS_STATUS status,
      tSirFwStatsResult *fwStatsResult, void *context)
 {
 	struct hdd_request *request;
@@ -2747,7 +2778,7 @@ void hdd_fw_statis_cb(VOS_STATUS status,
 	}
 	priv = hdd_request_priv(request);
 
-	if (VOS_STATUS_SUCCESS != status)
+	if (VOS_STATUS_SUCCESS == status)
 		*priv->fw_stats = *fwStatsResult;
 	else
 		priv->fw_stats = NULL;
@@ -6700,8 +6731,9 @@ static int hdd_driver_command(hdd_adapter_t *pAdapter,
            char buf[32], len;
            void *cookie;
            struct hdd_request *request;
+           struct bcn_miss_rate_priv *priv;
            static const struct hdd_request_params params = {
-               .priv_size = 0,
+               .priv_size = sizeof(*priv),
                .timeout_ms = WLAN_WAIT_TIME_STATS,
            };
 
@@ -6721,6 +6753,8 @@ static int hdd_driver_command(hdd_adapter_t *pAdapter,
                goto exit;
            }
            cookie = hdd_request_cookie(request);
+           priv = hdd_request_priv(request);
+           priv->bcn_miss_rate = -1;
 
            status = sme_getBcnMissRate((tHalHandle)(pHddCtx->hHal),
                                        pAdapter->sessionId,
@@ -6745,9 +6779,15 @@ static int hdd_driver_command(hdd_adapter_t *pAdapter,
            }
 
            hddLog(VOS_TRACE_LEVEL_INFO,
-                  FL("GETBCNMISSRATE: bcnMissRate: %d"), gbcnMissRate);
+                  FL("GETBCNMISSRATE: bcnMissRate: %d"), priv->bcn_miss_rate);
 
-           len = snprintf(buf, sizeof(buf), "GETBCNMISSRATE %d", gbcnMissRate);
+           if (priv->bcn_miss_rate == -1) {
+               ret = -EFAULT;
+               goto free_bcn_miss_rate_req;
+           }
+
+           len = snprintf(buf, sizeof(buf), "GETBCNMISSRATE %d",
+                          priv->bcn_miss_rate);
            if (copy_to_user(priv_data.buf, &buf, len + 1))
            {
                hddLog(VOS_TRACE_LEVEL_ERROR,
@@ -6888,9 +6928,10 @@ free_bcn_miss_rate_req:
                ret = -ENOMEM;
                goto exit;
            }
+           cookie = hdd_request_cookie(request);
 
            status = sme_GetFwStats( (tHalHandle)pHddCtx->hHal, stats,
-                                   cookie, hdd_fw_statis_cb);
+                                   cookie, hdd_fw_stats_cb);
            if (eHAL_STATUS_SUCCESS != status)
            {
                hddLog(VOS_TRACE_LEVEL_ERROR,
