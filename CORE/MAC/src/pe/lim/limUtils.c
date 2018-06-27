@@ -5384,44 +5384,6 @@ void limTxComplete( tHalHandle hHal, void *pData )
               (void *) pData );        // lim passed in pPacket in the pData pointer that is given in this completion routine
 }
 
-static void lim_sta_run_time_chn_switch(tpAniSirGlobal pMac, eHalStatus status,
-                                        tANI_U32 *ctx)
-{
-
-   tpPESession psessionEntry = (tpPESession)ctx;
-#if !defined WLAN_FEATURE_VOWIFI
-   tANI_U32 localPwrConstraint;
-#endif
-
-   if (!psessionEntry)
-   {
-       limLog(pMac, LOGE, FL("pSessionEntry is null pointer "));
-       return;
-   }
-
-#if !defined WLAN_FEATURE_VOWIFI
-   if(wlan_cfgGetInt(pMac, WNI_CFG_LOCAL_POWER_CONSTRAINT,
-      &localPwrConstraint) != eSIR_SUCCESS) {
-      limLog( pMac, LOGP, FL("Unable to get Local Power Constraint from cfg"));
-      return;
-   }
-#endif
-
-#if defined WLAN_FEATURE_VOWIFI
-   limSendSwitchChnlParams(pMac,
-                           psessionEntry->gLimChannelSwitch.primaryChannel,
-                           psessionEntry->gLimChannelSwitch.secondarySubBand,
-                           psessionEntry->maxTxPower,
-                           psessionEntry->peSessionId);
-#else
-   limSendSwitchChnlParams(pMac,
-                           psessionEntry->gLimChannelSwitch.primaryChannel,
-                           psessionEntry->gLimChannelSwitch.secondarySubBand,
-                           (tPowerdBm)localPwrConstraint,
-                           psessionEntry->peSessionId);
-#endif
-}
-
 /**
  * \brief This function updates lim global structure, if CB parameters in the BSS
  *  have changed, and sends an indication to HAL also with the
@@ -5448,6 +5410,10 @@ void limUpdateStaRunTimeHTSwitchChnlParams( tpAniSirGlobal   pMac,
                                   tpPESession      psessionEntry)
 {
     ePhyChanBondState secondaryChnlOffset = PHY_SINGLE_CHANNEL_CENTERED;
+#if !defined WLAN_FEATURE_VOWIFI  
+    tANI_U32 localPwrConstraint;
+#endif
+    
    //If self capability is set to '20Mhz only', then do not change the CB mode.
    if( !limGetHTCapability( pMac, eHT_SUPPORTED_CHANNEL_WIDTH_SET, psessionEntry ))
         return;
@@ -5458,6 +5424,13 @@ void limUpdateStaRunTimeHTSwitchChnlParams( tpAniSirGlobal   pMac,
                FL("force_24_gh_in_ht20 is set and channel is 2.4 Ghz"));
         return;
    }
+
+#if !defined WLAN_FEATURE_VOWIFI  
+    if(wlan_cfgGetInt(pMac, WNI_CFG_LOCAL_POWER_CONSTRAINT, &localPwrConstraint) != eSIR_SUCCESS) {
+        limLog( pMac, LOGP, FL( "Unable to get Local Power Constraint from cfg" ));
+        return;
+    }
+#endif
 
     if (pMac->ft.ftPEContext.pFTPreAuthReq)
     {
@@ -5479,14 +5452,6 @@ void limUpdateStaRunTimeHTSwitchChnlParams( tpAniSirGlobal   pMac,
         return;
     }
 
-    if (limIsLinkSuspended(pMac))
-    {
-        limLog(pMac, LOGE, FL("Link is already suspended for some other reason "
-               "or scan in progress. Return here for session id:%d"),
-               pMac->lim.limTimers.gLimChannelSwitchTimer.sessionId);
-        return;
-    }
-
     if ( psessionEntry->htSecondaryChannelOffset != ( tANI_U8 ) pHTInfo->secondaryChannelOffset ||
          psessionEntry->htRecommendedTxWidthSet  != ( tANI_U8 ) pHTInfo->recommendedTxWidthSet )
     {
@@ -5505,17 +5470,15 @@ void limUpdateStaRunTimeHTSwitchChnlParams( tpAniSirGlobal   pMac,
         psessionEntry->channelChangeReasonCode=LIM_SWITCH_CHANNEL_OPERATION;
         pMac->lim.gpchangeChannelCallback = NULL;
         pMac->lim.gpchangeChannelData = NULL;
-        psessionEntry->gLimChannelSwitch.primaryChannel =
-                                                        pHTInfo->primaryChannel;
-        psessionEntry->gLimChannelSwitch.secondarySubBand = secondaryChnlOffset;
 
-        if (isLimSessionOffChannel(pMac, psessionEntry->peSessionId))
-            limSuspendLink(pMac, eSIR_DONT_CHECK_LINK_TRAFFIC_BEFORE_SCAN,
-                           lim_sta_run_time_chn_switch,
-                           (tANI_U32*)psessionEntry);
-        else
-            lim_sta_run_time_chn_switch(pMac, eHAL_STATUS_SUCCESS,
-                                        (tANI_U32*)psessionEntry);
+#if defined WLAN_FEATURE_VOWIFI  
+        limSendSwitchChnlParams( pMac, ( tANI_U8 ) pHTInfo->primaryChannel,
+                                 secondaryChnlOffset, psessionEntry->maxTxPower, psessionEntry->peSessionId);
+#else
+        limSendSwitchChnlParams( pMac, ( tANI_U8 ) pHTInfo->primaryChannel,
+                                 secondaryChnlOffset, (tPowerdBm)localPwrConstraint, psessionEntry->peSessionId);
+#endif
+
         //In case of IBSS, if STA should update HT Info IE in its beacons.
        if (eLIM_STA_IN_IBSS_ROLE == psessionEntry->limSystemRole)
         {
