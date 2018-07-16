@@ -1266,7 +1266,7 @@ void
 limProcessMlmAssocInd(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
 {
     tANI_U32            len;
-    vos_msg_t msg;
+    tSirMsgQ            msgQ;
     tSirSmeAssocInd    *pSirSmeAssocInd;
     tpDphHashNode       pStaDs=0;
     tpPESession         psessionEntry;
@@ -1294,9 +1294,9 @@ limProcessMlmAssocInd(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
 
     pSirSmeAssocInd->messageType = eWNI_SME_ASSOC_IND;
     limFillAssocIndParams(pMac, (tpLimMlmAssocInd) pMsgBuf, pSirSmeAssocInd, psessionEntry);
-    msg.type = eWNI_SME_ASSOC_IND;
-    msg.bodyptr = pSirSmeAssocInd;
-    msg.bodyval = 0;
+    msgQ.type = eWNI_SME_ASSOC_IND;
+    msgQ.bodyptr = pSirSmeAssocInd;
+    msgQ.bodyval = 0;
     pStaDs = dphGetHashEntry(pMac,
                              ((tpLimMlmAssocInd) pMsgBuf)->aid, &psessionEntry->dph.dphHashTable);
     if (! pStaDs)
@@ -1310,10 +1310,12 @@ limProcessMlmAssocInd(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
     pSirSmeAssocInd->staId = pStaDs->staIndex;
    pSirSmeAssocInd->reassocReq = pStaDs->mlmStaContext.subType;
    MTRACE(macTrace(pMac, TRACE_CODE_TX_SME_MSG, psessionEntry->peSessionId,
-                   msg.type));
+                                                             msgQ.type));
 #ifdef FEATURE_WLAN_DIAG_SUPPORT_LIM //FEATURE_WLAN_DIAG_SUPPORT
     limDiagEventReport(pMac, WLAN_PE_DIAG_ASSOC_IND_EVENT, psessionEntry, 0, 0);
 #endif //FEATURE_WLAN_DIAG_SUPPORT
+    limSysProcessMmhMsgApi(pMac, &msgQ,  ePROT);
+
     limLog(pMac, LOG1,
        FL("Create CNF_WAIT_TIMER after received LIM_MLM_ASSOC_IND"));
     /*
@@ -1321,8 +1323,6 @@ limProcessMlmAssocInd(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
      **/
     limActivateCnfTimer(pMac, (tANI_U16) ((tpLimMlmAssocInd) pMsgBuf)->aid, psessionEntry);
 
-    if (pMac->lim.sme_msg_callback)
-        pMac->lim.sme_msg_callback(pMac, &msg);
 // Enable this Compile flag to test the BT-AMP -AP assoc sequence
 #ifdef TEST_BTAMP_AP
 //tANI_U32 *pMsgBuf;

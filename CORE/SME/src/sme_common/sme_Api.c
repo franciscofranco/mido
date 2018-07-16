@@ -1968,7 +1968,6 @@ eHalStatus sme_HDDReadyInd(tHalHandle hHal)
 
       Msg.messageType = eWNI_SME_SYS_READY_IND;
       Msg.length      = sizeof( tSirSmeReadyReq );
-      Msg.sme_msg_cb = sme_process_msg_callback;
 
       if (eSIR_FAILURE != uMacPostCtrlMsg( hHal, (tSirMbMsg*)&Msg ))
       {
@@ -15344,18 +15343,4 @@ void sme_request_imps(tHalHandle hal)
    tpAniSirGlobal mac_ctx = PMAC_STRUCT(hal);
 
    csrScanStartIdleScan(mac_ctx);
-}
-
-VOS_STATUS sme_process_msg_callback(tHalHandle hal, vos_msg_t *msg)
-{
-   tpAniSirGlobal mac_ctx = PMAC_STRUCT(hal);
-   VOS_STATUS status = VOS_STATUS_E_FAILURE;
-
-   if (msg == NULL) {
-       smsLog(mac_ctx, LOGE, FL("Empty message for SME Msg callback"));
-       return status;
-   }
-   status = sme_ProcessMsg(hal, msg);
-
-   return status;
 }

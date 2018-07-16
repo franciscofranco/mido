@@ -4075,15 +4075,5 @@ sme_get_cb_phy_mode_from_cb_ini_mode(uint32_t cb_ini_value)
  * Return: void
  */
 void sme_request_imps(tHalHandle hal);
-/**
- * sme_process_msg_callback() - process callback message from LIM
- * @hal: global hal handle
- * @msg: vos message
- *
- * This function process the callback messages from LIM.
- *
- * Return: VOS_STATUS enumeration.
- */
-VOS_STATUS sme_process_msg_callback(tHalHandle hal, vos_msg_t *msg);
 
 #endif //#if !defined( __SME_API_H )
