@@ -2918,8 +2918,8 @@ limProcessMlmDisassocReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_
     tpPESession              psessionEntry;
     extern tANI_BOOLEAN     sendDisassocFrame;
     tSirSmeDisassocRsp      *pSirSmeDisassocRsp;
+    tANI_U32                *pMsg;
     tANI_U8                 *pBuf;
-    vos_msg_t               msg = {0};
 
     if(eHAL_STATUS_SUCCESS != suspendStatus)
     {
@@ -3043,14 +3043,10 @@ limProcessMlmDisassocReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_
          pBuf  = (tANI_U8 *) pSirSmeDisassocRsp->peerMacAddr;
          vos_mem_copy( pBuf, pMlmDisassocReq->peerMacAddr, sizeof(tSirMacAddr));
 
-         msg.type = eWNI_SME_DISASSOC_RSP;
-         msg.bodyptr = pSirSmeDisassocRsp;
+         pMsg = (tANI_U32*) pSirSmeDisassocRsp;
 
-         if (pMac->lim.sme_msg_callback)
-             pMac->lim.sme_msg_callback(pMac, &msg);
-         else
-             limLog(pMac, LOGE, FL("Sme msg callback is NULL"));
-
+         limSendSmeDisassocDeauthNtf( pMac, eHAL_STATUS_SUCCESS,
+                                                (tANI_U32*) pMsg );
          return;
 
     }
@@ -3254,7 +3250,8 @@ limProcessMlmDeauthReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_U3
     tpPESession             psessionEntry;
     tSirSmeDeauthRsp        *pSirSmeDeauthRsp;
     tANI_U8                 *pBuf;
-    vos_msg_t               msg = {0};
+    tANI_U32                *pMsg;
+
 
     if(eHAL_STATUS_SUCCESS != suspendStatus)
     {
@@ -3460,13 +3457,10 @@ limProcessMlmDeauthReqNtf(tpAniSirGlobal pMac, eHalStatus suspendStatus, tANI_U3
         pBuf  = (tANI_U8 *) pSirSmeDeauthRsp->peerMacAddr;
         vos_mem_copy( pBuf, pMlmDeauthReq->peerMacAddr, sizeof(tSirMacAddr));
 
-        msg.type = eWNI_SME_DEAUTH_RSP;
-        msg.bodyptr = pSirSmeDeauthRsp;
+        pMsg = (tANI_U32*)pSirSmeDeauthRsp;
 
-        if (pMac->lim.sme_msg_callback)
-            pMac->lim.sme_msg_callback(pMac, &msg);
-        else
-            limLog(pMac, LOGE, FL("Sme msg callback is NULL"));
+        limSendSmeDisassocDeauthNtf( pMac, eHAL_STATUS_SUCCESS,
+                                            (tANI_U32*) pMsg );
 
         return;
 
