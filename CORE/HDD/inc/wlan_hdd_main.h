@@ -1863,12 +1863,6 @@ struct hdd_context_s
     struct mutex cache_channel_lock;
 };
 
-typedef enum  {
-        TP_IND_LOW = 1,
-        TP_IND_MEDIUM,
-        TP_IND_HIGH,
-}TP_IND_TYPE;
-
 /* Use to notify the TDLS or BTCOEX is mode enable */
 typedef enum
 {
@@ -2383,5 +2377,14 @@ int hdd_get_disable_ch_list(hdd_context_t *hdd_ctx, tANI_U8 *buf,
  * Return: true if supported and false otherwise
  */
 bool hdd_is_memdump_supported(void);
+
+/**
+ * hdd_is_cli_iface_up() - check if there is any cli iface up
+ * @hdd_ctx: HDD context
+ *
+ * Return: return true if there is any cli iface(STA/P2P_CLI) is up
+ *         else return false
+ */
+bool hdd_is_cli_iface_up(hdd_context_t *hdd_ctx);
 
 #endif    // end #if !defined( WLAN_HDD_MAIN_H )

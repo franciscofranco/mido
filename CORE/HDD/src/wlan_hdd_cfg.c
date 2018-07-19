@@ -3952,6 +3952,14 @@ REG_VARIABLE( CFG_EXTSCAN_ENABLE, WLAN_PARAM_Integer,
                CFG_STA_AUTH_RETRIES_FOR_CODE17_MIN,
                CFG_STA_AUTH_RETRIES_FOR_CODE17_MAX ),
 
+  REG_VARIABLE( CFG_INDOOR_CHANNEL_SUPPORT_NAME, WLAN_PARAM_Integer,
+               hdd_config_t, indoor_channel_support,
+               VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
+               CFG_INDOOR_CHANNEL_SUPPORT_DEFAULT,
+               CFG_INDOOR_CHANNEL_SUPPORT_MIN,
+               CFG_INDOOR_CHANNEL_SUPPORT_MAX),
+
+
   REG_VARIABLE( CFG_TRIGGER_NULLFRAME_BEFORE_HB_NAME, WLAN_PARAM_Integer,
                 hdd_config_t, trigger_nullframe_before_hb,
                 VAR_FLAGS_OPTIONAL | VAR_FLAGS_RANGE_CHECK_ASSUME_DEFAULT,
@@ -4847,6 +4855,7 @@ static VOS_STATUS hdd_apply_cfg_ini( hdd_context_t *pHddCtx, tCfgIniEntry* iniTa
    {
       hddLog(LOGE, "%s: MAX_CFG_INI_ITEMS too small, must be at least %ld",
              __func__, cRegTableEntries);
+      VOS_ASSERT(1);
    }
 
    for ( idx = 0; idx < cRegTableEntries; idx++, pRegEntry++ )

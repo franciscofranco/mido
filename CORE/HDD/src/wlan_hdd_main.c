@@ -759,6 +759,12 @@ void hdd_checkandupdate_dfssetting( hdd_adapter_t *pAdapter, char *country_code)
        /*New country doesn't support DFS */
        sme_UpdateDfsSetting(WLAN_HDD_GET_HAL_CTX(pAdapter), 0);
     }
+    else
+    {
+       /* New country Supports DFS as well resetting value back from .ini */
+       sme_UpdateDfsSetting(WLAN_HDD_GET_HAL_CTX(pAdapter),
+                            cfg_param->enableDFSChnlScan);
+    }
 
 }
 
@@ -8320,6 +8326,13 @@ int __hdd_stop (struct net_device *dev)
                    "wlan in power save", __func__);
        }
    }
+
+   /*
+    * Upon wifi turn off, DUT has to flush the scan results so if
+    * this is the last cli iface, flush the scan database.
+    */
+   if (!hdd_is_cli_iface_up(pHddCtx))
+       sme_ScanFlushResult(pHddCtx->hHal, 0);
    
    EXIT();
    return 0;
@@ -9053,7 +9066,8 @@ static hdd_adapter_t* hdd_alloc_station_adapter( hdd_context_t *pHddCtx, tSirMac
       vos_mem_copy(pWlanDev->dev_addr, (void *)macAddr, sizeof(tSirMacAddr));
       vos_mem_copy( pAdapter->macAddressCurrent.bytes, macAddr, sizeof(tSirMacAddr));
       pWlanDev->watchdog_timeo = HDD_TX_TIMEOUT;
-      pWlanDev->hard_header_len += LIBRA_HW_NEEDED_HEADROOM;
+
+      pWlanDev->needed_headroom = LIBRA_HW_NEEDED_HEADROOM;
 
       hdd_set_station_ops( pAdapter->dev );
 
@@ -10498,14 +10512,14 @@ VOS_STATUS hdd_stop_adapter( hdd_context_t *pHddCtx, hdd_adapter_t *pAdapter,
          {
             VOS_STATUS status;
             hdd_context_t *pHddCtx = WLAN_HDD_GET_CTX(pAdapter);
+            hdd_hostapd_state_t *pHostapdState =
+                                    WLAN_HDD_GET_HOSTAP_STATE_PTR(pAdapter);
 
+            vos_event_reset(&pHostapdState->vosEvent);
             //Stop Bss.
             status = WLANSAP_StopBss(pHddCtx->pvosContext);
             if (VOS_IS_STATUS_SUCCESS(status))
             {
-               hdd_hostapd_state_t *pHostapdState = 
-                  WLAN_HDD_GET_HOSTAP_STATE_PTR(pAdapter);
-
                status = vos_wait_single_event(&pHostapdState->vosEvent, 10000);
    
                if (!VOS_IS_STATUS_SUCCESS(status))
@@ -10622,6 +10636,7 @@ static void wlan_hdd_restart_sap(hdd_adapter_t *ap_adapter)
             goto end;
         }
 
+        vos_event_reset(&pHostapdState->vosEvent);
         if (WLANSAP_StartBss(pHddCtx->pvosContext, hdd_hostapd_SAPEventCB,
             pConfig, (v_PVOID_t)ap_adapter->dev) != VOS_STATUS_SUCCESS) {
             hddLog(LOGE, FL("SAP Start Bss fail"));
@@ -12853,13 +12868,13 @@ void hdd_request_tcp_delack(hdd_context_t *pHddCtx, uint64_t rx_packets)
     /* average of rx_packets and prev_rx is taken so that
        bus width doesnot fluctuate much */
     uint64_t temp_rx = (rx_packets + pHddCtx->prev_rx)/2;
-    TP_IND_TYPE next_rx_level = pHddCtx->cur_rx_level;
+    enum wlan_tp_level next_rx_level = pHddCtx->cur_rx_level;
 
     pHddCtx->prev_rx = rx_packets;
     if (temp_rx > pHddCtx->cfg_ini->tcpDelAckThresholdHigh)
-        next_rx_level = TP_IND_HIGH;
+        next_rx_level = WLAN_SVC_TP_HIGH;
     else if (temp_rx <= pHddCtx->cfg_ini->tcpDelAckThresholdLow)
-        next_rx_level = TP_IND_LOW;
+        next_rx_level = WLAN_SVC_TP_LOW;
 
     hdd_set_delack_value(pHddCtx, next_rx_level);
 }
@@ -15488,14 +15503,20 @@ v_U8_t  hdd_get_total_sessions(hdd_context_t *pHddCtx)
 void hdd_set_delack_value(hdd_context_t *pHddCtx, v_U32_t next_rx_level)
 {
     if (pHddCtx->cur_rx_level != next_rx_level) {
+        struct wlan_rx_tp_data rx_tp_data = {0};
+
         VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_DEBUG,
                "%s: TCP DELACK trigger level %d",
                __func__, next_rx_level);
         mutex_lock(&pHddCtx->cur_rx_level_lock);
         pHddCtx->cur_rx_level = next_rx_level;
         mutex_unlock(&pHddCtx->cur_rx_level_lock);
-        wlan_hdd_send_svc_nlink_msg(WLAN_SVC_WLAN_TP_IND, &next_rx_level,
-                                                       sizeof(next_rx_level));
+
+        rx_tp_data.rx_tp_flags |= TCP_DEL_ACK_IND;
+        rx_tp_data.level = next_rx_level;
+
+        wlan_hdd_send_svc_nlink_msg(WLAN_SVC_WLAN_TP_IND, &rx_tp_data,
+                                                      sizeof(rx_tp_data));
     }
 }
 
@@ -15518,7 +15539,7 @@ void hdd_set_default_stop_delack_timer(hdd_context_t *pHddCtx)
     }
 
     vos_timer_stop(&pHddCtx->delack_timer);
-    hdd_set_delack_value(pHddCtx, TP_IND_LOW);
+    hdd_set_delack_value(pHddCtx, WLAN_SVC_TP_LOW);
 }
 
 /**
@@ -18420,6 +18441,28 @@ bool hdd_is_memdump_supported(void)
 	return false;
 }
 
+bool hdd_is_cli_iface_up(hdd_context_t *hdd_ctx)
+{
+	hdd_adapter_list_node_t *adapter_node = NULL, *next = NULL;
+	hdd_adapter_t *adapter;
+	VOS_STATUS status;
+
+	status = hdd_get_front_adapter(hdd_ctx, &adapter_node);
+	while (NULL != adapter_node && VOS_STATUS_SUCCESS == status) {
+		adapter = adapter_node->pAdapter;
+		if ((adapter->device_mode == WLAN_HDD_INFRA_STATION ||
+		     adapter->device_mode == WLAN_HDD_P2P_CLIENT) &&
+		    test_bit(DEVICE_IFACE_OPENED,
+					&adapter->event_flags)){
+			return true;
+		}
+		status = hdd_get_next_adapter(hdd_ctx, adapter_node, &next);
+		adapter_node = next;
+	}
+
+	return false;
+}
+
 //Register the module init/exit functions
 module_init(hdd_module_init);
 module_exit(hdd_module_exit);
@@ -18438,8 +18481,12 @@ static const struct kernel_param_ops fwpath_ops = {
 	.get = param_get_string,
 };
 
+#ifdef MODULE
+module_param(con_mode, int, 0);
+#else
 module_param_cb(con_mode, &con_mode_ops, &con_mode,
                     S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+#endif
 
 module_param_cb(fwpath, &fwpath_ops, &fwpath,
                     S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);

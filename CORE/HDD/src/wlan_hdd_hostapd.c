@@ -221,16 +221,26 @@ int hdd_hostapd_open (struct net_device *dev)
   --------------------------------------------------------------------------*/
 int __hdd_hostapd_stop (struct net_device *dev)
 {
+   hdd_adapter_t *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
+   hdd_context_t *hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+   int ret;
+
    ENTER();
 
-   if(NULL != dev) {
-       hddLog(VOS_TRACE_LEVEL_INFO, FL("Disabling queues"));
-       //Stop all tx queues
-       netif_tx_disable(dev);
+   ret = wlan_hdd_validate_context(hdd_ctx);
+   if (0 != ret)
+       return ret;
 
-       //Turn OFF carrier state
-       netif_carrier_off(dev);
-   }
+   hddLog(VOS_TRACE_LEVEL_INFO, FL("Disabling queues"));
+
+   //Stop all tx queues
+   netif_tx_disable(dev);
+
+   //Turn OFF carrier state
+   netif_carrier_off(dev);
+
+   if (!hdd_is_cli_iface_up(hdd_ctx))
+       sme_ScanFlushResult(hdd_ctx->hHal, 0);
 
    EXIT();
    return 0;
@@ -4590,10 +4600,12 @@ static int __iw_softap_stopbss(struct net_device *dev,
 
     if(test_bit(SOFTAP_BSS_STARTED, &pHostapdAdapter->event_flags))
     {
+        hdd_hostapd_state_t *pHostapdState =
+                              WLAN_HDD_GET_HOSTAP_STATE_PTR(pHostapdAdapter);
+
+        vos_event_reset(&pHostapdState->vosEvent);
         if ( VOS_STATUS_SUCCESS == (status = WLANSAP_StopBss((WLAN_HDD_GET_CTX(pHostapdAdapter))->pvosContext) ) )
         {
-            hdd_hostapd_state_t *pHostapdState = WLAN_HDD_GET_HOSTAP_STATE_PTR(pHostapdAdapter);
-
             status = vos_wait_single_event(&pHostapdState->vosEvent, 10000);
 
             if (!VOS_IS_STATUS_SUCCESS(status))
