@@ -8874,8 +8874,7 @@ const struct wiphy_vendor_command hdd_wiphy_vendor_commands[] =
         .info.vendor_id = QCA_NL80211_VENDOR_ID,
         .info.subcmd = QCA_NL80211_VENDOR_SUBCMD_GET_LOGGER_FEATURE_SET,
         .flags = WIPHY_VENDOR_CMD_NEED_WDEV |
-                 WIPHY_VENDOR_CMD_NEED_NETDEV |
-                 WIPHY_VENDOR_CMD_NEED_RUNNING,
+                 WIPHY_VENDOR_CMD_NEED_NETDEV,
         .doit = wlan_hdd_cfg80211_get_logger_supp_feature
    },
 };
@@ -17377,6 +17376,12 @@ static int wlan_hdd_cfg80211_set_privacy_ibss(
             if ( NULL != ie )
             {
                 pWextState->wpaVersion = IW_AUTH_WPA_VERSION_WPA;
+
+                if (ie[1] < DOT11F_IE_WPA_MIN_LEN ||
+                    ie[1] > DOT11F_IE_WPA_MAX_LEN) {
+                    hddLog(LOGE, FL("invalid ie len:%d"), ie[1]);
+                    return -EINVAL;
+                }
                 // Unpack the WPA IE
                 //Skip past the EID byte and length byte - and four byte WiFi OUI
                 ret = dot11fUnpackIeWPA((tpAniSirGlobal) halHandle,
