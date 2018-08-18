@@ -7819,7 +7819,8 @@ static int wlan_hdd_cfg80211_get_link_properties(struct wiphy *wiphy,
 #define PARAM_GUARD_TIME QCA_WLAN_VENDOR_ATTR_CONFIG_GUARD_TIME
 #define PARAM_BCNMISS_PENALTY_PARAM_COUNT \
         QCA_WLAN_VENDOR_ATTR_CONFIG_PENALIZE_AFTER_NCONS_BEACON_MISS
-
+#define PARAM_FORCE_RSN_IE \
+        QCA_WLAN_VENDOR_ATTR_CONFIG_RSN_IE
 /*
  * hdd_set_qpower() - Process the qpower command and invoke the SME api
  * @hdd_ctx: hdd context
@@ -7876,6 +7877,7 @@ static int __wlan_hdd_cfg80211_wifi_configuration_set(struct wiphy *wiphy,
                                              { .type = NLA_U32},
                         [BEACON_MISS_THRESH_2_4] = { .type = NLA_U8 },
                         [BEACON_MISS_THRESH_5_0] = { .type = NLA_U8 },
+                        [PARAM_FORCE_RSN_IE] = {.type = NLA_U8 },
     };
 
     ENTER();
@@ -8055,6 +8057,21 @@ static int __wlan_hdd_cfg80211_wifi_configuration_set(struct wiphy *wiphy,
        /* FW is expacting qpower as 1 for Disable and 2 for enable */
        qpower++;
        hdd_set_qpower(pHddCtx, qpower);
+    }
+
+    if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RSN_IE] &&
+        pHddCtx->cfg_ini->force_rsne_override) {
+        uint8_t force_rsne_override;
+
+        force_rsne_override =
+            nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RSN_IE]);
+        if (force_rsne_override > 1) {
+            hddLog(LOGE, "Invalid test_mode %d", force_rsne_override);
+            ret_val = -EINVAL;
+        }
+        pHddCtx->force_rsne_override = force_rsne_override;
+        hddLog(LOG1, "force_rsne_override - %d",
+                             pHddCtx->force_rsne_override);
     }
 
     EXIT();
@@ -10646,7 +10663,8 @@ void hdd_update_indoor_channel(hdd_context_t *hdd_ctx, bool disable)
 
 int wlan_hdd_disconnect( hdd_adapter_t *pAdapter, u16 reason )
 {
-    int status, result = 0;
+    eHalStatus status;
+    int result = 0;
     hdd_station_ctx_t *pHddStaCtx = WLAN_HDD_GET_STATION_CTX_PTR(pAdapter);
     hdd_context_t *pHddCtx = WLAN_HDD_GET_CTX(pAdapter);
     long ret;
@@ -10655,11 +10673,6 @@ int wlan_hdd_disconnect( hdd_adapter_t *pAdapter, u16 reason )
 
     ENTER();
 
-    status = wlan_hdd_validate_context(pHddCtx);
-    if (0 != status)
-    {
-        return status;
-    }
     /* Indicate sme of disconnect so that in progress connection or preauth
      * can be aborted
      */
@@ -11044,7 +11057,8 @@ static int wlan_hdd_cfg80211_start_bss(hdd_adapter_t *pHostapdAdapter,
             hdd_update_indoor_channel(pHddCtx, false);
             VOS_TRACE(VOS_MODULE_ID_SAP, VOS_TRACE_LEVEL_ERROR,
                  FL("Can't start BSS: update channel list failed"));
-            return eHAL_STATUS_FAILURE;
+            ret = eHAL_STATUS_FAILURE;
+            goto tdls_enable;
         }
 
         /* check if STA is on indoor channel */
@@ -11666,6 +11680,11 @@ error:
     }
 
    clear_bit(SOFTAP_INIT_DONE, &pHostapdAdapter->event_flags);
+
+tdls_enable:
+        if (ret != eHAL_STATUS_SUCCESS)
+            wlan_hdd_tdls_reenable(pHddCtx);
+
    return ret;
 }
 
@@ -12347,9 +12366,9 @@ int __wlan_hdd_cfg80211_change_iface( struct wiphy *wiphy,
     /* Reset the current device mode bit mask*/
     wlan_hdd_clear_concurrency_mode(pHddCtx, pAdapter->device_mode);
 
-    if ((pAdapter->device_mode == WLAN_HDD_P2P_DEVICE) &&
-        ((type == NL80211_IFTYPE_P2P_CLIENT) ||
-         (type == NL80211_IFTYPE_P2P_GO)))
+    if (((pAdapter->device_mode == WLAN_HDD_P2P_DEVICE) &&
+        (type == NL80211_IFTYPE_P2P_CLIENT || type == NL80211_IFTYPE_P2P_GO)) ||
+        type == NL80211_IFTYPE_AP)
     {
         /* Notify Mode change in case of concurrency.
          * Below function invokes TDLS teardown Functionality Since TDLS is
@@ -15366,7 +15385,7 @@ int __wlan_hdd_cfg80211_scan( struct wiphy *wiphy,
             pHddCtx->last_scan_reject_session_id = curr_session_id;
             pHddCtx->last_scan_reject_reason = curr_reason;
             pHddCtx->last_scan_reject_timestamp =
-              jiffies_to_msecs(jiffies) + SCAN_REJECT_THRESHOLD_TIME;
+              jiffies + msecs_to_jiffies(SCAN_REJECT_THRESHOLD_TIME);
             pHddCtx->scan_reject_cnt = 0;
         }
         else
@@ -15375,13 +15394,12 @@ int __wlan_hdd_cfg80211_scan( struct wiphy *wiphy,
 
             if ((pHddCtx->scan_reject_cnt >=
                SCAN_REJECT_THRESHOLD) &&
-               vos_system_time_after(jiffies_to_msecs(jiffies),
+               vos_system_time_after(jiffies,
                pHddCtx->last_scan_reject_timestamp))
             {
-                hddLog(LOGE, FL("Session %d reason %d reject cnt %d threshold time has elapsed? %d"),
+                hddLog(LOGE, FL("Session %d reason %d reject cnt %d reject timestamp %lu jiffies %lu"),
                     curr_session_id, curr_reason, pHddCtx->scan_reject_cnt,
-                    vos_system_time_after(jiffies_to_msecs(jiffies),
-                    pHddCtx->last_scan_reject_timestamp));
+                    pHddCtx->last_scan_reject_timestamp, jiffies);
                 pHddCtx->last_scan_reject_timestamp = 0;
                 pHddCtx->scan_reject_cnt = 0;
                 if (pHddCtx->cfg_ini->enableFatalEvent)
