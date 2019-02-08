@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2018 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -381,6 +381,10 @@ eHalStatus csrQueueScanRequest( tpAniSirGlobal pMac, tSmeCmd *pScanCmd )
     /* split scan if any one of the following:
      * - STA session is connected and the scan is not a P2P search
      * - any P2P session is connected
+     * - STA+SAP. In STA+SAP concurrency, scan requests received on
+     *   STA interface when not in connected state are not split.
+     *   This can result in large time gap between successive beacons
+     *   sent by SAP.
      * Do not split scans if no concurrent infra connections are 
      * active and if the scan is a BG scan triggered by LFR (OR)
      * any scan if LFR is in the middle of a BG scan. Splitting
@@ -388,7 +392,11 @@ eHalStatus csrQueueScanRequest( tpAniSirGlobal pMac, tSmeCmd *pScanCmd )
      * candidates and resulting in disconnects.
      */
 
-    if(csrIsStaSessionConnected(pMac) &&
+    if (csrIsInfraApStarted(pMac))
+    {
+      nNumChanCombinedConc = 1;
+    }
+    else if(csrIsStaSessionConnected(pMac) &&
        !csrIsP2pSessionConnected(pMac))
     {
       nNumChanCombinedConc = pMac->roam.configParam.nNumStaChanCombinedConc;
@@ -2915,6 +2923,37 @@ eHalStatus csrScanFlushSelectiveResult(tpAniSirGlobal pMac, v_BOOL_t flushP2P)
     return (status);
 }
 
+eHalStatus csrScanFlushSelectiveSsid(tpAniSirGlobal pMac, tANI_U8 *ssId,
+                                     tANI_U8 ssIdLen)
+{
+    eHalStatus status = eHAL_STATUS_SUCCESS;
+    tListElem *pEntry,*pFreeElem;
+    tCsrScanResult *pBssDesc;
+    tDblLinkList *pList = &pMac->scan.scanResultList;
+
+    csrLLLock(pList);
+
+    pEntry = csrLLPeekHead( pList, LL_ACCESS_NOLOCK );
+    while( pEntry != NULL)
+    {
+        pBssDesc = GET_BASE_ADDR( pEntry, tCsrScanResult, Link );
+        if(vos_mem_compare(pBssDesc->Result.ssId.ssId,
+                            ssId, ssIdLen) )
+        {
+            pFreeElem = pEntry;
+            pEntry = csrLLNext(pList, pEntry, LL_ACCESS_NOLOCK);
+            csrLLRemoveEntry(pList, pFreeElem, LL_ACCESS_NOLOCK);
+            csrFreeScanResultEntry( pMac, pBssDesc );
+            continue;
+        }
+        pEntry = csrLLNext(pList, pEntry, LL_ACCESS_NOLOCK);
+    }
+
+    csrLLUnlock(pList);
+
+    return (status);
+}
+
 /**
  * csrCheck11dChannel
  *
@@ -3351,38 +3390,44 @@ eHalStatus csrScanningStateMsgProcessor( tpAniSirGlobal pMac, void *pMsgBuf )
     return (status);
 }
 
-
-
-void csrCheckNSaveWscIe(tpAniSirGlobal pMac, tSirBssDescription *pNewBssDescr, tSirBssDescription *pOldBssDescr)
+void csrCheckNSaveWscIe(tpAniSirGlobal pMac, tSirBssDescription *pNewBssDescr,tSirBssDescription *pOldBssDescr)
 {
-    int idx, len;
+    int elem_id, len, elem_len;
     tANI_U8 *pbIe;
 
     //If failed to remove, assuming someone else got it.
     if((pNewBssDescr->fProbeRsp != pOldBssDescr->fProbeRsp) &&
        (0 == pNewBssDescr->WscIeLen))
     {
-        idx = 0;
-        len = GET_IE_LEN_IN_BSS(pOldBssDescr->length)
-              - DOT11F_IE_WSCPROBERES_MIN_LEN - 2;
+        len = GET_IE_LEN_IN_BSS(pOldBssDescr->length);
         pbIe = (tANI_U8 *)pOldBssDescr->ieFields;
         //Save WPS IE if it exists
         pNewBssDescr->WscIeLen = 0;
-        while(idx < len)
+        while (len >= 2)
         {
-            if((DOT11F_EID_WSCPROBERES == pbIe[0]) &&
-                (0x00 == pbIe[2]) && (0x50 == pbIe[3]) && (0xf2 == pbIe[4]) && (0x04 == pbIe[5]))
-            {
-                //Founrd it
-                if((DOT11F_IE_WSCPROBERES_MAX_LEN - 2) >= pbIe[1])
-                {
-                    vos_mem_copy(pNewBssDescr->WscIeProbeRsp, pbIe, pbIe[1] + 2);
-                    pNewBssDescr->WscIeLen = pbIe[1] + 2;
-                }
-                break;
+            elem_id = pbIe[0];
+            elem_len = pbIe[1];
+            len -= 2;
+            if (elem_len > len) {
+                smsLog(pMac, LOGW, FL("Invalid eid: %d elem_len: %d left: %d"),
+                       elem_id, elem_len, len);
+                return;
             }
-            idx += pbIe[1] + 2;
-            pbIe += pbIe[1] + 2;
+            if ((elem_id == DOT11F_EID_WSCPROBERES) &&
+                (elem_len >= DOT11F_IE_WSCPROBERES_MIN_LEN) &&
+                ((pbIe[2] == 0x00) && (pbIe[3] == 0x50) && (pbIe[4] == 0xf2) &&
+                (pbIe[5] == 0x04)))
+            {
+                if((elem_len + 2) <= WSCIE_PROBE_RSP_LEN)
+                {
+                    vos_mem_copy(pNewBssDescr->WscIeProbeRsp,
+                                 pbIe, elem_len + 2);
+                    pNewBssDescr->WscIeLen = elem_len + 2;
+                }
+                return;
+            }
+            len -= elem_len;
+            pbIe += (elem_len + 2);
         }
     }
 }
@@ -3397,6 +3442,10 @@ tANI_BOOLEAN csrRemoveDupBssDescription( tpAniSirGlobal pMac, tSirBssDescription
 
     tCsrScanResult *pBssDesc;
     tANI_BOOLEAN fRC = FALSE;
+    tDot11fBeaconIEs *temp_ie = pIes;
+
+    if (!temp_ie)
+        csrGetParsedBssDescriptionIEs(pMac, pSirBssDescr, &temp_ie);
 
     // Walk through all the chained BssDescriptions.  If we find a chained BssDescription that
     // matches the BssID of the BssDescription passed in, then these must be duplicate scan
@@ -3409,9 +3458,36 @@ tANI_BOOLEAN csrRemoveDupBssDescription( tpAniSirGlobal pMac, tSirBssDescription
 
         // we have a duplicate scan results only when BSSID, SSID, Channel and NetworkType
         // matches
-        if ( csrIsDuplicateBssDescription( pMac, &pBssDesc->Result.BssDescriptor, 
-                                                        pSirBssDescr, pIes, fForced ) )
+        if (csrIsDuplicateBssDescription(pMac, &pBssDesc->Result.BssDescriptor,
+                                          pSirBssDescr, temp_ie, fForced))
         {
+            /*
+             * Due to Rx sensitivity issue, sometime beacons are seen on
+             * adjacent channel so workaround in software is needed. If DS
+             * params or HT info are present driver can get proper channel
+             * info from these IEs and the older RSSI values are used in new
+             * entry.
+             *
+             * For the cases where DS params and HT info is not present,
+             * driver needs to check below conditions to update proper
+             * channel so that the older RSSI and channel values are used in
+             * new entry:
+             *  -- The old entry channel and new entry channel are not same
+             *  -- RSSI is below 15db or more from old value, this indicate
+             *     that the signal has leaked in adjacent channel
+             */
+            if (!pSirBssDescr->fProbeRsp &&
+                (temp_ie && !temp_ie->DSParams.present &&
+                !temp_ie->HTInfo.present) &&
+                (pSirBssDescr->channelId !=
+                 pBssDesc->Result.BssDescriptor.channelId) &&
+                ((pBssDesc->Result.BssDescriptor.rssi - pSirBssDescr->rssi) >
+                 SIR_ADJACENT_CHANNEL_RSSI_DIFF_THRESHOLD)) {
+                 pSirBssDescr->channelId =
+                            pBssDesc->Result.BssDescriptor.channelId;
+                pSirBssDescr->rssi =
+                                 pBssDesc->Result.BssDescriptor.rssi;
+            }
             pSirBssDescr->rssi = (tANI_S8)( (((tANI_S32)pSirBssDescr->rssi * CSR_SCAN_RESULT_RSSI_WEIGHT ) +
                                              ((tANI_S32)pBssDesc->Result.BssDescriptor.rssi * (100 - CSR_SCAN_RESULT_RSSI_WEIGHT) )) / 100 );
             // Remove the 'old' entry from the list....
@@ -3437,6 +3513,9 @@ tANI_BOOLEAN csrRemoveDupBssDescription( tpAniSirGlobal pMac, tSirBssDescription
 
         pEntry = csrLLNext( &pMac->scan.scanResultList, pEntry, LL_ACCESS_LOCK );
     }
+
+    if (!pIes && temp_ie)
+       vos_mem_free(temp_ie);
 
     return fRC;
 }
@@ -5323,13 +5402,16 @@ tANI_BOOLEAN csrScanComplete( tpAniSirGlobal pMac, tSirSmeScanRsp *pScanRsp )
 }
 
 
-
 static void csrScanRemoveDupBssDescriptionFromInterimList( tpAniSirGlobal pMac, 
                                                            tSirBssDescription *pSirBssDescr,
                                                            tDot11fBeaconIEs *pIes)
 {
     tListElem *pEntry;
     tCsrScanResult *pCsrBssDescription;
+    tDot11fBeaconIEs *temp_ie = pIes;
+
+    if (!temp_ie)
+        csrGetParsedBssDescriptionIEs(pMac, pSirBssDescr, &temp_ie);
 
     // Walk through all the chained BssDescriptions.  If we find a chained BssDescription that
     // matches the BssID of the BssDescription passed in, then these must be duplicate scan
@@ -5342,9 +5424,39 @@ static void csrScanRemoveDupBssDescriptionFromInterimList( tpAniSirGlobal pMac,
         // we have a duplicate scan results only when BSSID, SSID, Channel and NetworkType
         // matches
 
-        if ( csrIsDuplicateBssDescription( pMac, &pCsrBssDescription->Result.BssDescriptor, 
-                                             pSirBssDescr, pIes, FALSE ) )
+        if (csrIsDuplicateBssDescription(pMac,
+                                     &pCsrBssDescription->Result.BssDescriptor,
+                                     pSirBssDescr, temp_ie, FALSE))
         {
+            /*
+             * Due to Rx sensitivity issue, sometime beacons are seen on
+             * adjacent channel so workaround in software is needed. If DS
+             * params or HT info are present driver can get proper channel
+             * info from these IEs and the older RSSI values are used in new
+             * entry.
+             *
+             * For the cases where DS params and HT info is not present,
+             * driver needs to check below conditions to update proper
+             * channel so that the older RSSI and channel values are used in
+             * new entry:
+             *  -- The old entry channel and new entry channel are not same
+             *  -- RSSI is below 15db or more from old value, this indicate
+             *     that the signal has leaked in adjacent channel
+             */
+            if (!pSirBssDescr->fProbeRsp &&
+                (temp_ie && !temp_ie->DSParams.present &&
+                !temp_ie->HTInfo.present) &&
+                (pSirBssDescr->channelId !=
+                 pCsrBssDescription->Result.BssDescriptor.channelId) &&
+                ((pCsrBssDescription->Result.BssDescriptor.rssi -
+                  pSirBssDescr->rssi) >
+                 SIR_ADJACENT_CHANNEL_RSSI_DIFF_THRESHOLD)) {
+                 pSirBssDescr->channelId =
+                            pCsrBssDescription->Result.BssDescriptor.channelId;
+                pSirBssDescr->rssi =
+                                 pCsrBssDescription->Result.BssDescriptor.rssi;
+            }
+
             pSirBssDescr->rssi = (tANI_S8)( (((tANI_S32)pSirBssDescr->rssi * CSR_SCAN_RESULT_RSSI_WEIGHT ) +
                                     ((tANI_S32)pCsrBssDescription->Result.BssDescriptor.rssi * (100 - CSR_SCAN_RESULT_RSSI_WEIGHT) )) / 100 );
 
@@ -5362,6 +5474,9 @@ static void csrScanRemoveDupBssDescriptionFromInterimList( tpAniSirGlobal pMac,
 
         pEntry = csrLLNext( &pMac->scan.tempScanResults, pEntry, LL_ACCESS_LOCK );
     }
+
+    if (!pIes && temp_ie)
+       vos_mem_free(temp_ie);
 }
 
 
@@ -7177,6 +7292,10 @@ static void csrStaApConcTimerHandler(void *pv)
          * any one of the following:
          * - STA session is connected and the scan is not a P2P search
          * - any P2P session is connected
+         * - STA+SAP. In STA+SAP concurrency, scan requests received on
+         *   STA interface when not in connected state are not split.
+         *   This can result in large time gap between successive beacons
+         *   sent by SAP.
          * Do not split scans if no concurrent infra connections are 
          * active and if the scan is a BG scan triggered by LFR (OR)
          * any scan if LFR is in the middle of a BG scan. Splitting
@@ -7184,7 +7303,11 @@ static void csrStaApConcTimerHandler(void *pv)
          * candidates and resulting in disconnects.
          */
 
-        if((csrIsStaSessionConnected(pMac) &&
+        if (csrIsInfraApStarted(pMac))
+        {
+            nNumChanCombinedConc = 1;
+        }
+        else if((csrIsStaSessionConnected(pMac) &&
            !csrIsP2pSessionConnected(pMac)))
         {
            nNumChanCombinedConc = pMac->roam.configParam.nNumStaChanCombinedConc;
@@ -9113,6 +9236,13 @@ eHalStatus csrScanSavePreferredNetworkFound(tpAniSirGlobal pMac,
    {
       uLen = pPrefNetworkFoundInd->frameLength -
           (SIR_MAC_HDR_LEN_3A + SIR_MAC_B_PR_SSID_OFFSET);
+   }
+
+   if (uLen > (UINT_MAX - sizeof(tCsrScanResult))) {
+       smsLog(pMac, LOGE, FL("Incorrect len: %d, may leads to int overflow, uLen %d"),
+              pPrefNetworkFoundInd->frameLength, uLen);
+       vos_mem_vfree(pParsedFrame);
+       return eHAL_STATUS_FAILURE;
    }
 
    pScanResult = vos_mem_malloc(sizeof(tCsrScanResult) + uLen);

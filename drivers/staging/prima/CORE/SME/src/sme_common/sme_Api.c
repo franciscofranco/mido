@@ -1970,6 +1970,7 @@ eHalStatus sme_HDDReadyInd(tHalHandle hHal)
 
       Msg.messageType = eWNI_SME_SYS_READY_IND;
       Msg.length      = sizeof( tSirSmeReadyReq );
+      Msg.sme_msg_cb = sme_process_msg_callback;
 
       if (eSIR_FAILURE != uMacPostCtrlMsg( hHal, (tSirMbMsg*)&Msg ))
       {
@@ -2762,6 +2763,7 @@ eHalStatus sme_ProcessMsg(tHalHandle hHal, vos_msg_t* pMsg)
                    vos_msg_t vosMessage = {0};
                    tANI_U32 session_id = 0;
                    bool active_scan;
+                   tANI_U32 nTime = 0;
 
                    if (pSmeCoexInd->coexIndType == SIR_COEX_IND_TYPE_DISABLE_AGGREGATION_IN_2p4)
                    {
@@ -2789,6 +2791,11 @@ eHalStatus sme_ProcessMsg(tHalHandle hHal, vos_msg_t* pMsg)
                        pMac->scan.fRestartIdleScan = eANI_BOOLEAN_TRUE;
                        pMac->scan.fCancelIdleScan = eANI_BOOLEAN_FALSE;
 
+                       if(csrIsAllSessionDisconnected(pMac) &&
+                          !HAL_STATUS_SUCCESS(csrScanTriggerIdleScan(pMac,
+                           &nTime))) {
+                              csrScanStartIdleScanTimer(pMac, nTime);
+                       }
                        /*
                         * If aggregation during SCO is enabled, there is a
                         * possibility for an active BA session. This session
@@ -15285,7 +15292,7 @@ VOS_STATUS sme_roam_csa_ie_request(tHalHandle hal, tCsrBssid bssid,
    if (VOS_IS_STATUS_SUCCESS(status)) {
        if (CSR_IS_CHANNEL_5GHZ(new_chan)) {
            sme_SelectCBMode(hal, phy_mode, new_chan,
-                            session->bssParams.orig_ch_width);
+                            eHT_MAX_CHANNEL_WIDTH);
            cb_mode = mac_ctx->roam.configParam.channelBondingMode5GHz;
        }
        status = csr_roam_send_chan_sw_ie_request(mac_ctx, bssid,
@@ -15316,7 +15323,7 @@ VOS_STATUS sme_roam_channel_change_req(tHalHandle hal, tCsrBssid bssid,
    if (VOS_IS_STATUS_SUCCESS(status)) {
        if (CSR_IS_CHANNEL_5GHZ(new_chan)) {
            sme_SelectCBMode(hal, profile->phyMode, new_chan,
-                            session->bssParams.orig_ch_width);
+                            eHT_MAX_CHANNEL_WIDTH);
            cb_mode = mac_ctx->roam.configParam.channelBondingMode5GHz;
        }
        status = csr_roam_channel_change_req(mac_ctx, bssid, new_chan, cb_mode,
@@ -15345,4 +15352,40 @@ void sme_request_imps(tHalHandle hal)
    tpAniSirGlobal mac_ctx = PMAC_STRUCT(hal);
 
    csrScanStartIdleScan(mac_ctx);
+}
+
+bool sme_is_sta_key_exchange_in_progress(tHalHandle hal, uint8_t session_id)
+{
+    tpAniSirGlobal mac_ctx = PMAC_STRUCT(hal);
+
+    if (!CSR_IS_SESSION_VALID(mac_ctx, session_id)) {
+        VOS_TRACE(VOS_MODULE_ID_SME, VOS_TRACE_LEVEL_ERROR,
+                  FL("Invalid session %d"), session_id);
+        return false;
+    }
+
+    return CSR_IS_WAIT_FOR_KEY(mac_ctx, session_id);
+}
+
+VOS_STATUS sme_process_msg_callback(tHalHandle hal, vos_msg_t *msg)
+{
+   tpAniSirGlobal mac_ctx = PMAC_STRUCT(hal);
+   VOS_STATUS status = VOS_STATUS_E_FAILURE;
+
+   if (msg == NULL) {
+       smsLog(mac_ctx, LOGE, FL("Empty message for SME Msg callback"));
+       return status;
+   }
+   status = sme_ProcessMsg(hal, msg);
+
+   return status;
+}
+
+uint32_t sme_unpack_rsn_ie(tHalHandle hal, uint8_t *buf,
+                           uint8_t buf_len,
+                           tDot11fIERSN *rsn_ie)
+{
+         tpAniSirGlobal mac_ctx = PMAC_STRUCT(hal);
+
+         return dot11fUnpackIeRSN(mac_ctx, buf, buf_len, rsn_ie);
 }

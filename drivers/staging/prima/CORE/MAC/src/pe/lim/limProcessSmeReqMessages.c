@@ -426,6 +426,7 @@ static tANI_BOOLEAN
 __limProcessSmeSysReadyInd(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
 {
     tSirMsgQ msg;
+    tSirSmeReadyReq *ready_req = (tSirSmeReadyReq *) pMsgBuf;
     
     msg.type = WDA_SYS_READY_IND;
     msg.reserved = 0;
@@ -435,6 +436,7 @@ __limProcessSmeSysReadyInd(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
     if (pMac->gDriverType != eDRIVER_TYPE_MFG)
     {
         peRegisterTLHandle(pMac);
+        pMac->lim.sme_msg_callback = ready_req->sme_msg_cb;
     }
     PELOGW(limLog(pMac, LOGW, FL("sending WDA_SYS_READY_IND msg to HAL"));)
     MTRACE(macTraceMsgTx(pMac, NO_SESSION, msg.type));
@@ -2641,6 +2643,16 @@ __limProcessSmeDisassocReq(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
         case eLIM_BT_AMP_STA_ROLE:
             switch (psessionEntry->limSmeState)
             {
+		/* cleanup FT session and proceed with disconnect
+		 * if received disconnect from supplicant when roaming
+		 * and lim state is eLIM_SME_WT_REASSOC_STATE. As the
+		 * FT session would have already created but is not cleaned.
+		 * This will prevent sending duplicate add bss request,
+		 * if we try to disconnect and connect to the same AP
+		 */
+		case eLIM_SME_WT_REASSOC_STATE:
+			limFTCleanup(pMac);
+			/* Fall through */
                 case eLIM_SME_ASSOCIATED_STATE:
                 case eLIM_SME_LINK_EST_STATE:
                     limLog(pMac, LOG1, FL("Rcvd SME_DISASSOC_REQ while in "
@@ -5662,7 +5674,7 @@ void lim_send_chan_switch_action_frame(tpAniSirGlobal mac_ctx,
    switch_count = session_entry->gLimChannelSwitch.switchCount;
    dph_node_array_ptr = session_entry->dph.dphHashTable.pDphNodeArray;
 
-   for (i = 0; i < (mac_ctx->lim.maxStation + 1); i++) {
+   for (i = 0; i < session_entry->dph.dphHashTable.size; i++) {
         psta = dph_node_array_ptr + i;
         if (!(psta && psta->added))
             continue;

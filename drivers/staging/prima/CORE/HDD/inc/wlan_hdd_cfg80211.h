@@ -1427,6 +1427,19 @@ enum qca_wlan_vendor_config {
     QCA_WLAN_VENDOR_ATTR_CONFIG_BEACON_MISS_THRESHOLD_24 = 37,
     /* 8-bit unsigned value to set the beacon miss threshold in 5 GHz */
     QCA_WLAN_VENDOR_ATTR_CONFIG_BEACON_MISS_THRESHOLD_5 = 38,
+
+    /*8-bit unsigned value indicating the driver to use the RSNE as-is from
+     * the connect interface. Exclusively used for the scenarios where the
+     * device is used as a test bed device with special functionality and
+     * not recommended for production. This helps driver to not validate the
+     * RSNE passed from user space and thus allow arbitrary IE data to be
+     * used for testing purposes.
+     * 1-enable, 0-disable.
+     * Applications set/reset this configuration. If not reset, this
+     * parameter remains in use until the driver is unloaded.
+     */
+    QCA_WLAN_VENDOR_ATTR_CONFIG_RSN_IE = 39,
+
     /* keep last */
     QCA_WLAN_VENDOR_ATTR_CONFIG_LAST,
     QCA_WLAN_VENDOR_ATTR_CONFIG_MAX =
@@ -1743,8 +1756,7 @@ void hdd_update_indoor_channel(hdd_context_t *hdd_ctx,
  */
 void hdd_modify_indoor_channel_state_flags(
     struct ieee80211_channel *wiphy_chan,
-    v_U32_t rfChannel,
-    bool disable);
+    v_U32_t rfChannel, bool disable, hdd_context_t *hdd_ctx);
 
 
 v_U8_t* wlan_hdd_cfg80211_get_ie_ptr(
@@ -1876,5 +1888,16 @@ void wlan_hdd_sap_get_sta_rssi(hdd_adapter_t *adapter, uint8_t staid, s8 *rssi);
 VOS_STATUS wlan_hdd_send_sta_authorized_event(hdd_adapter_t *adapter,
                                               hdd_context_t *hdd_ctx,
                                               const v_MACADDR_t *mac_addr);
+
+/**
+ * wlan_hdd_disconnect() - hdd disconnect api
+ * @pAdapter: Pointer to adapter
+ * @reason: Disconnect reason code
+ *
+ * This function is used to issue a disconnect request to SME
+ *
+ * Return: 0 for success, non-zero for failure
+ */
+int wlan_hdd_disconnect(hdd_adapter_t *pAdapter, u16 reason);
 
 #endif
